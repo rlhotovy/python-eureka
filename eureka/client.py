@@ -35,7 +35,7 @@ class EurekaClient(object):
     def __init__(self, app_name, eureka_url=None, eureka_domain_name=None, host_name=None, data_center="Amazon",
                  vip_address=None, secure_vip_address=None, port=None, secure_port=None, use_dns=True, region=None,
                  prefer_same_zone=True, context="eureka/v2", eureka_port=None,
-                 health_check_url=None):
+                 health_check_url=None, eureka_host_name=None):
         super(EurekaClient, self).__init__()
         self.app_name = app_name
         self.eureka_url = eureka_url
@@ -62,6 +62,7 @@ class EurekaClient(object):
         # Relative URL to eureka
         self.context = context
         self.health_check_url = health_check_url
+        self.eureka_host_name = eureka_host_name
         self.eureka_urls = self.get_eureka_urls()
 
     def _get_txt_records_from_dns(self, domain):
@@ -84,6 +85,8 @@ class EurekaClient(object):
     def get_eureka_urls(self):
         if self.eureka_url:
             return [self.eureka_url]
+        elif self.eureka_host_name:
+            return [self._build_eureka_url(self.eureka_host_name)]
         elif self.use_dns:
             zone_dns_map = self.get_zones_from_dns()
             zones = zone_dns_map.keys()
@@ -100,18 +103,22 @@ class EurekaClient(object):
                 eureka_instances = zone_dns_map[zone]
                 random.shuffle(eureka_instances)  # Shuffle order for load balancing
                 for eureka_instance in eureka_instances:
-                    server_uri = "http://%s" % eureka_instance
-                    if self.eureka_port:
-                        server_uri += ":%s" % self.eureka_port
-                    eureka_instance_url = urljoin(server_uri, self.context, "/")
-                    if not eureka_instance_url.endswith("/"):
-                        eureka_instance_url = "%s/" % eureka_instance_url
+                    eureka_instance_url = self._build_eureka_url(eureka_instance)
                     service_urls.append(eureka_instance_url)
             primary_server = service_urls.pop(0)
             random.shuffle(service_urls)
             service_urls.insert(0, primary_server)
             logger.info("This client will talk to the following serviceUrls in order: %s" % service_urls)
             return service_urls
+
+    def _build_eureka_url(self, eureka_instance):
+        server_uri = "http://%s" % eureka_instance
+        if self.eureka_port:
+            server_uri += ":%s" % self.eureka_port
+        eureka_instance_url = urljoin(server_uri, self.context, "/")
+        if not eureka_instance_url.endswith("/"):
+            eureka_instance_url = "%s/" % eureka_instance_url
+        return eureka_instance_url
 
     def get_instance_zone(self):
         if self.data_center == "Amazon":
@@ -204,6 +211,7 @@ class EurekaClient(object):
     def _get_from_any_instance(self, endpoint):
         for eureka_url in self.eureka_urls:
             try:
+                print urljoin(eureka_url, endpoint)
                 r = requests.get(urljoin(eureka_url, endpoint), headers={'accept': 'application/json'})
                 r.raise_for_status()
                 return json.loads(r.content)
@@ -228,3 +236,6 @@ class EurekaClient(object):
 
     def get_app_instance(self, app_id, instance_id):
         return self._get_from_any_instance("apps/%s/%s" % (app_id, instance_id))
+
+    def get_delta(self):
+        return self._get_from_any_instance("apps/delta")
